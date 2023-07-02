@@ -1,0 +1,112 @@
+#include "libfc.fif"
+
+#define TON_EXCHANGE_PAIR_ADDRESS 0x00000000000000000
+
+contract TONReceiver {
+  int TON @0;
+  int IUniswapV2Pair @1;
+  int IStaking @2;
+  int ERC20 @3;
+
+  const LogTONTransfer = 0;
+  const LogVotingCheckFailed = 1;
+  const LogDEXConversion = 2;
+  const LogConvertedAndReturned = 3;
+  const LogDepositedToStaking = 4;
+  const LogWithdrawnFromStaking = 5;
+
+  var lastRequestTime;
+
+  function checkVoting(int tonAmount) : bool {
+        return 1;
+    }
+
+  function receiveFromBridge(int tonAddress, int tonAmount) {
+        if (!checkVoting(tonAmount)) {
+        event LogVotingCheckFailed();
+        return;
+        }
+
+        TON ton = TON(tonAddress);
+        ton.transferFrom(this, tonAmount);
+
+        event LogTONTransfer(tonAmount);
+    }
+
+  function convert(int dexAddress, int tokenAddress, int tonAmount) {
+        if (!checkVoting(tonAmount)) {
+            event LogVotingCheckFailed();
+            return;
+        }
+
+        IUniswapV2Pair pair = IUniswapV2Pair(dexAddress);
+        var reserves = pair.getReserves();
+        int tokenAmount = pair.quote(reserves[0], reserves[1], tonAmount);
+
+        ERC20 token = ERC20(tokenAddress);
+        token.transferFrom(this, tokenAmount);
+
+        event LogDEXConversion(tonAmount, tokenAmount, tokenAddress);
+    } 
+
+  function sendToStaking(int stakingAddress, int tokenAmount) {
+        IStaking staking = IStaking(stakingAddress);
+        staking.deposit(this, tokenAmount);
+
+        event LogDepositedToStaking(tokenAmount, stakingAddress);
+    }
+
+  function receiveFromStaking(int stakingAddress) {
+        IStaking staking = IStaking(stakingAddress);
+        int withdrawnAmount = staking.withdrawal(this);
+
+        event LogWithdrawnFromStaking(withdrawnAmount, stakingAddress);
+    }
+
+  function convertAndReturn(int tonAmount) {
+        int convertedAmount = swapTONToOtherCurrency(tonAmount);
+
+        sendToStaking(convertedAmount);
+
+        waitWeeks(1);
+
+        int stakingReturn = receiveFromStaking(convertedAmount);
+        int convertedTONAmount = swapOtherCurrencyToTON(stakingReturn);
+        event LogConvertedAndReturned(convertedTONAmount);
+    }
+
+  function swapTONToOtherCurrency(int tonAmount) : int {
+        IUniswapV2Pair tonExchangePair = IUniswapV2Pair(TON_EXCHANGE_PAIR_ADDRESS);
+
+        var tonExchangePairReserves = tonExchangePair.getReserves();
+
+        int targetCurrencyAmount = tonExchangePair.quote(tonExchangePairReserves[0], tonExchangePairReserves[1], tonAmount);
+        TON ton = TON(TON_EXCHANGE_PAIR_ADDRESS);
+        ton.transferFrom(this, tonAmount);
+
+        ERC20 targetCurrency = ERC20(tonExchangePairReserves[0]);
+        targetCurrency.transferFrom(this, targetCurrencyAmount);
+
+        return targetCurrencyAmount;
+    }
+   function swapOtherCurrencyToTON(int otherCurrencyAmount) : int {
+        IUniswapV2Pair tonExchangePair = IUniswapV2Pair(TON_EXCHANGE_PAIR_ADDRESS);
+        var tonExchangePairReserves = tonExchangePair.getReserves();
+
+        int tonAmount = tonExchangePair.quote(tonExchangePairReserves[1], tonExchangePairReserves[
+        0], otherCurrencyAmount);
+
+        ERC20 targetCurrency = ERC20(tonExchangePairReserves[0]);
+        targetCurrency.transfer(this, otherCurrencyAmount);
+
+        TON ton = TON(TON_EXCHANGE_PAIR_ADDRESS);
+        ton.transfer(this, tonAmount);
+
+        return tonAmount;
+    }
+
+    function waitWeeks(int weeks) {
+        lastRequestTime = now + weeks * 7 * 24 * 60 * 60;
+        while (now < lastRequestTime) {}
+    }
+}
